@@ -185,24 +185,28 @@ class _ChatScreenState extends State<ChatScreen> {
 
   // --- Equivalent to deleteMessage() ---
   Future<void> _deleteMessage(int messageId, bool deleteForEveryone) async {
+    setState(() {
+      _messages.removeWhere((msg) => msg.messageId == messageId);
+    });
+
     try {
       await http.delete(
         Uri.parse('$baseUrl/messages/$messageId'),
         headers: {
-          'Authorization': 'Bearer $_token', 'Content-Type': 'application/json', 'Accept': 'application/json',
+          'Authorization': 'Bearer $_token',
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
         },
         body: jsonEncode({'delete_for_everyone': deleteForEveryone}),
       );
-      if (!deleteForEveryone) {
-        // If only deleting for me, we need to manually remove it from the list.
-        // The real-time event won't fire for this case.
-        setState(() {
-          _messages.removeWhere((msg) => msg.messageId == messageId);
-        });
-      }
-      // If deleting for everyone, the 'MessageDeleted' event will handle removal for all clients.
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error deleting message: $e')));
+      print('Error deleting message: $e. Restoring UI.');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Failed to delete message.'), backgroundColor: Colors.red)
+        );
+        _fetchMessages();
+      }
     }
   }
 
@@ -215,54 +219,54 @@ class _ChatScreenState extends State<ChatScreen> {
     );
 
     reverb = SimpleFlutterReverb(options: options);
-
     final channelName = 'chat.${widget.chatId}';
 
-    // --- Use ONE listen() call, exactly like your working example ---
-    // The listen method takes 3 arguments: callback, channelName, isPrivate.
     reverb.listen((event) {
-      // First, do a basic safety check on the event itself.
-      if (event?.data == null || event!.event == null) {
-        print('Received an incomplete or null event.');
-        return;
-      }
+      if (event?.data == null || event!.event == null) return;
 
       switch (event.event) {
         case 'App\\Events\\MessageSent':
-          print('Received MessageSent event');
+        // This part works, so we keep it.
           try {
             final messageData = event.data['message'];
             if (messageData == null) return;
-
             final newMessage = Message.fromJson(messageData, _currentUserId!);
 
             if (!_messages.any((msg) => msg.messageId == newMessage.messageId)) {
               setState(() => _messages.add(newMessage));
               _scrollToBottom();
             }
-          } catch (e, stackTrace) {
-            print('--- ERROR Processing MessageSent ---');
-            print('ERROR: $e\nSTACKTRACE: $stackTrace');
+          } catch (e) {
+            print('Error processing MessageSent: $e');
           }
-          break; // Don't forget to break!
+          break;
 
         case 'App\\Events\\MessageDeleted':
-          print('Received MessageDeleted event');
           try {
-            final deletedMessageId = event.data['messageId'];
-            if (deletedMessageId == null) return;
+            // --- THE ROBUST FIX ---
+            // 1. Get the ID as a dynamic type.
+            final dynamic receivedId = event.data['messageId'];
+            if (receivedId == null) return;
 
+            // 2. Safely parse it to an integer. If it's already an int, this does nothing.
+            // If it's a String like "123", it becomes the int 123.
+            // If it's a double like 123.0, it becomes the int 123.
+            // We use toString() to handle all cases (int, double, string).
+            final int? deletedMessageId = int.tryParse(receivedId.toString());
+            if (deletedMessageId == null) return; // If parsing fails, do nothing.
+
+            // 3. Now the comparison is guaranteed to be between two integers.
             setState(() {
               _messages.removeWhere((msg) => msg.messageId == deletedMessageId);
             });
-          } catch (e, stackTrace) {
-            print('--- ERROR Processing MessageDeleted ---');
-            print('ERROR: $e\nSTACKTRACE: $stackTrace');
+            print('Successfully removed message ID: $deletedMessageId in real-time.');
+
+          } catch (e) {
+            print('Error processing MessageDeleted: $e');
           }
-          break; // Don't forget to break!
+          break;
 
         default:
-        // Handle any other events you might not expect
           print('Received unhandled event type: ${event.event}');
       }
     }, channelName, isPrivate: true);
