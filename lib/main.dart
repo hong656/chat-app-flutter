@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
-import 'chat_screen.dart'; // Import your first chat screen
-import 'chat_screen_2.dart'; // Import your second chat screen
-import 'login_screen.dart'; // Import your login screen
+import 'login_screen.dart';
+import 'users_list_screen.dart';
+import 'chat_list_screen.dart';
 
 void main() {
   runApp(const MyApp());
@@ -18,12 +18,15 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         primarySwatch: Colors.blue,
       ),
-      initialRoute: '/login',
+      initialRoute: '/login', // Assuming you still want to start at login
       routes: {
         '/login': (context) => const LoginScreen(),
-        '/': (context) => const HomePage(),
-        '/chat1': (context) => const ChatScreen(),
-        '/chat2': (context) => const ChatScreen2(),
+        '/': (context) => const HomePage(), // This is your main page after login
+        '/users_list': (context) => const UsersListScreen(), // Route for Users List
+        '/chat_list': (context) => const ChatListScreen(),   // Route for Chat List
+        // You can keep or remove chat1 and chat2 routes if they are no longer needed
+        // '/chat1': (context) => const ChatScreen(),
+        // '/chat2': (context) => const ChatScreen2(),
       },
     );
   }
@@ -36,7 +39,7 @@ class HomePage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Choose a Chat Screen'),
+        title: const Text('Main Menu'), // Updated title
       ),
       body: Center(
         child: Column(
@@ -44,22 +47,18 @@ class HomePage extends StatelessWidget {
           children: <Widget>[
             ElevatedButton(
               onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const ChatScreen()), // Nav to ChatScreen
-                );
+                // Navigate using the named route
+                Navigator.pushNamed(context, '/users_list');
               },
-              child: const Text('Go to Chat Screen 1'),
+              child: const Text('Go to Users List'),
             ),
             const SizedBox(height: 20),
             ElevatedButton(
               onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const ChatScreen2()), // Nav to ChatScreen2
-                );
+                // Navigate using the named route
+                Navigator.pushNamed(context, '/chat_list');
               },
-              child: const Text('Go to Chat Screen 2'),
+              child: const Text('Go to Chat List'),
             ),
           ],
         ),

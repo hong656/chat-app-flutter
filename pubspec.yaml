@@ -37,6 +37,7 @@ dependencies:
   cupertino_icons: ^1.0.8
   simple_flutter_reverb: ^0.0.3
   shared_preferences: ^2.5.3
+  shimmer: ^3.0.0
 
 dev_dependencies:
   flutter_test:
