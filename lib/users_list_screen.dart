@@ -6,7 +6,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
 // Import your User model
-import 'user_model.dart';
+import 'models/user_model.dart';
 
 // We need a StatefulWidget to manage state like loading, errors, and the user list.
 class UsersListScreen extends StatefulWidget {
