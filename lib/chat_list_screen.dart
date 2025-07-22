@@ -34,7 +34,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
     // Use your API endpoint
     final response = await http.get(
-      Uri.parse('https://api-test-chat.d.aditidemo.asia/api/chat'),
+      Uri.parse('http://127.0.0.1:8000/api/chat'),
       headers: {
         'Authorization': 'Bearer $token',
         'Accept': 'application/json',

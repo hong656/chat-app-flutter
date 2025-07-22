@@ -61,7 +61,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
     try {
       final response = await http.post(
-        Uri.parse('https://api-test-chat.d.aditidemo.asia/api/login'),
+        Uri.parse('http://127.0.0.1:8000/api/login'),
         headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
         body: jsonEncode({
           'email': _emailController.text.trim(),

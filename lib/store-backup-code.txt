@@ -1,0 +1,14 @@
+---------------------login
+      final response = await http.post(
+        Uri.parse('https://api-test-chat.d.aditidemo.asia/api/login'),
+        headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
+        body: jsonEncode({
+          'email': _emailController.text.trim(),
+          'password': _passwordController.text,
+        }),
+      );
+-------------------websocket chat_screen
+    final options = SimpleFlutterReverbOptions(
+      scheme: 'wss', host: 'api-test-chat.d.aditidemo.asia', port: '443',
+      appKey: '5wigxwtui29q0dviuc4a', authUrl: 'https://api-test-chat.d.aditidemo.asia/broadcasting/auth', authToken: _token!,
+    );

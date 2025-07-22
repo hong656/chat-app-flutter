@@ -5,10 +5,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:simple_flutter_reverb/simple_flutter_reverb.dart';
 import 'package:simple_flutter_reverb/simple_flutter_reverb_options.dart';
 
-// Import the new model
+// --- Import the WebRTC Service and its dependencies ---
+import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'services/webrtc_service.dart';
+
+// Import the user profile model
 import 'models/user_profile_model.dart';
 
-// --- The widget now only needs the chatId to start ---
+// The widget now only needs the chatId to start
 class ChatScreen extends StatefulWidget {
   final int chatId;
 
@@ -21,8 +25,9 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
+// (The Message class remains the same)
 class Message {
-  final int messageId; // Add messageId for deletion
+  final int messageId;
   final String sender;
   final int senderId;
   final String text;
@@ -42,7 +47,6 @@ class Message {
     final senderData = json['sender'] as Map<String, dynamic>? ?? {};
     final senderId = senderData['user_id'] as int? ?? 0;
     final senderName = senderData['name'] as String? ?? 'Unknown User';
-
     final createdAt = json['created_at'] as String? ?? DateTime.now().toIso8601String();
 
     return Message(
@@ -56,26 +60,31 @@ class Message {
   }
 }
 
+
 class _ChatScreenState extends State<ChatScreen> {
+  // --- Existing State Variables ---
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _controller = TextEditingController();
   late SimpleFlutterReverb reverb;
-
-  // --- State variables matching the Nuxt 'ref's ---
   List<Message> _messages = [];
   String? _token;
   int? _currentUserId;
   String _chatTitle = 'Loading...';
-
   bool _isLoading = true;
   String? _error;
+  final String baseUrl = 'http://127.0.0.1:8000/api';
 
-  final String baseUrl = 'https://api-test-chat.d.aditidemo.asia/api';
+  // --- NEW: State for WebRTC and Calling ---
+  final WebRTCService _webRTCService = WebRTCService();
+  bool _isCalling = false; // Controls the UI state (chat vs. calling)
+
 
   @override
   void initState() {
     super.initState();
     _initializeChat();
+    // Initialize the WebRTC service when the screen loads
+    _webRTCService.initialize();
   }
 
   // --- Master initialization, equivalent to onMounted ---
@@ -87,7 +96,6 @@ class _ChatScreenState extends State<ChatScreen> {
       _token = prefs.getString('token');
       if (_token == null) throw Exception('Auth token not found.');
 
-      // Perform fetches in sequence, just like the Nuxt example
       await _fetchUserProfile();
       await _fetchChatData();
       await _fetchMessages();
@@ -103,8 +111,159 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  // --- Equivalent to fetchUserProfile() ---
-  Future<void> _fetchUserProfile() async {
+  // --- NEW: Function to handle initiating a call ---
+  void _handleCall(BuildContext context, {required bool isVideoCall}) async {
+    setState(() {
+      _isCalling = true;
+    });
+
+    try {
+      // Use the service to start the call process
+      await _webRTCService.initiateCall(
+        // The service expects a String, but our widget has an int
+        chatId: widget.chatId.toString(),
+        isVideoCall: isVideoCall,
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Calling... Awaiting response.'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+      // In a real app, you would now navigate to a dedicated call screen
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error initiating call: ${e.toString().replaceAll("Exception: ", "")}'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+      // If the call fails, return to the chat UI
+      setState(() {
+        _isCalling = false;
+      });
+    }
+  }
+
+  // --- Build Methods ---
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF232B38),
+      appBar: AppBar(
+        title: Text(_chatTitle),
+        backgroundColor: const Color(0xFF2D3A53),
+        elevation: 0,
+        // --- NEW: Call buttons in the AppBar ---
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.videocam),
+            tooltip: 'Video Call',
+            // Disable button if a call is already in progress
+            onPressed: _isCalling ? null : () => _handleCall(context, isVideoCall: true),
+          ),
+          IconButton(
+            icon: const Icon(Icons.call),
+            tooltip: 'Audio Call',
+            onPressed: _isCalling ? null : () => _handleCall(context, isVideoCall: false),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
+      body: SafeArea(
+        child: Column(
+          children: [
+            // --- NEW: Conditionally show calling UI or chat UI ---
+            Expanded(
+                child: _isCalling ? _buildCallingUI() : _buildBody()
+            ),
+            // The message input is hidden when calling
+            if (!_isCalling) _buildMessageInput(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // --- NEW: Widget to display while a call is being initiated ---
+  Widget _buildCallingUI() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Text(
+            'Initiating Call...',
+            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white),
+          ),
+          const SizedBox(height: 20),
+          const CircularProgressIndicator(),
+          const SizedBox(height: 30),
+          // Container for the local video feed preview
+          Container(
+            width: 200,
+            height: 266,
+            decoration: BoxDecoration(
+              color: Colors.black,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.grey.shade700, width: 2),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: RTCVideoView(
+                _webRTCService.localRenderer,
+                mirror: true,
+                objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          // Button to cancel the call attempt
+          ElevatedButton.icon(
+            onPressed: () {
+              // TODO: Implement call cancellation on the backend if needed
+              setState(() { _isCalling = false; });
+            },
+            icon: const Icon(Icons.call_end),
+            label: const Text('Cancel'),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+          )
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBody() {
+    if (_isLoading) return const Center(child: CircularProgressIndicator());
+    if (_error != null) return Center(child: Text('Error: $_error', style: const TextStyle(color: Colors.red)));
+
+    return ListView.builder(
+      controller: _scrollController,
+      padding: const EdgeInsets.all(16),
+      itemCount: _messages.length,
+      itemBuilder: (context, index) => _buildMessageBubble(_messages[index]),
+    );
+  }
+
+  // (All other methods like _fetchUserProfile, _sendMessage, _deleteMessage, _buildMessageBubble, etc. remain unchanged)
+  // --- All the existing chat logic from your original file goes here ---
+
+  @override
+  void dispose() {
+    reverb.close();
+    _scrollController.dispose();
+    _controller.dispose();
+    _webRTCService.dispose(); // --- NEW: Dispose the service
+    super.dispose();
+  }
+
+  // --- Paste all your other unchanged methods here ---
+  Future<void> _fetchUserProfile() async { /* ... your existing code ... */
     final response = await http.get(
       Uri.parse('$baseUrl/profile'),
       headers: {'Authorization': 'Bearer $_token'},
@@ -118,9 +277,7 @@ class _ChatScreenState extends State<ChatScreen> {
       throw Exception('Failed to fetch user profile.');
     }
   }
-
-  // --- Equivalent to fetchChatData() ---
-  Future<void> _fetchChatData() async {
+  Future<void> _fetchChatData() async { /* ... your existing code ... */
     final response = await http.get(
       Uri.parse('$baseUrl/chat/${widget.chatId}'),
       headers: {'Authorization': 'Bearer $_token', 'Accept': 'application/json'},
@@ -143,9 +300,7 @@ class _ChatScreenState extends State<ChatScreen> {
       throw Exception('Failed to fetch chat data.');
     }
   }
-
-  // --- Equivalent to fetchMessages() ---
-  Future<void> _fetchMessages() async {
+  Future<void> _fetchMessages() async { /* ... your existing code ... */
     if (_currentUserId == null) return;
     final response = await http.get(
       Uri.parse('$baseUrl/messages/${widget.chatId}'),
@@ -163,9 +318,7 @@ class _ChatScreenState extends State<ChatScreen> {
       throw Exception('Failed to load messages.');
     }
   }
-
-  // --- Equivalent to sendMessage() ---
-  Future<void> _sendMessage() async {
+  Future<void> _sendMessage() async { /* ... your existing code ... */
     final text = _controller.text.trim();
     if (text.isEmpty || _token == null) return;
 
@@ -182,9 +335,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error sending message: $e')));
     }
   }
-
-  // --- Equivalent to deleteMessage() ---
-  Future<void> _deleteMessage(int messageId, bool deleteForEveryone) async {
+  Future<void> _deleteMessage(int messageId, bool deleteForEveryone) async { /* ... your existing code ... */
     setState(() {
       _messages.removeWhere((msg) => msg.messageId == messageId);
     });
@@ -209,13 +360,12 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     }
   }
-
-  void _setupReverbListeners() {
+  void _setupReverbListeners() { /* ... your existing code ... */
     if (_token == null || _currentUserId == null) return;
 
     final options = SimpleFlutterReverbOptions(
-      scheme: 'wss', host: 'api-test-chat.d.aditidemo.asia', port: '443',
-      appKey: '5wigxwtui29q0dviuc4a', authUrl: 'https://api-test-chat.d.aditidemo.asia/broadcasting/auth', authToken: _token!,
+      scheme: 'ws', host: '127.0.0.1', port: '8080',
+      appKey: '5wigxwtui29q0dviuc4a', authUrl: 'http://127.0.0.1:8000/broadcasting/auth', authToken: _token!,
     );
 
     reverb = SimpleFlutterReverb(options: options);
@@ -226,7 +376,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
       switch (event.event) {
         case 'App\\Events\\MessageSent':
-        // This part works, so we keep it.
           try {
             final messageData = event.data['message'];
             if (messageData == null) return;
@@ -243,19 +392,11 @@ class _ChatScreenState extends State<ChatScreen> {
 
         case 'App\\Events\\MessageDeleted':
           try {
-            // --- THE ROBUST FIX ---
-            // 1. Get the ID as a dynamic type.
             final dynamic receivedId = event.data['messageId'];
             if (receivedId == null) return;
-
-            // 2. Safely parse it to an integer. If it's already an int, this does nothing.
-            // If it's a String like "123", it becomes the int 123.
-            // If it's a double like 123.0, it becomes the int 123.
-            // We use toString() to handle all cases (int, double, string).
             final int? deletedMessageId = int.tryParse(receivedId.toString());
-            if (deletedMessageId == null) return; // If parsing fails, do nothing.
+            if (deletedMessageId == null) return;
 
-            // 3. Now the comparison is guaranteed to be between two integers.
             setState(() {
               _messages.removeWhere((msg) => msg.messageId == deletedMessageId);
             });
@@ -271,16 +412,12 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     }, channelName, isPrivate: true);
   }
-
-  // --- UI Functions ---
-
-  void _showDeleteDialog(Message message) {
-    String deleteOption = 'me'; // 'me' or 'everyone'
+  void _showDeleteDialog(Message message) { /* ... your existing code ... */
+    String deleteOption = 'me';
 
     showDialog(
       context: context,
       builder: (context) {
-        // StatefulBuilder is used to manage state inside the dialog
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
@@ -294,7 +431,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     groupValue: deleteOption,
                     onChanged: (value) => setDialogState(() => deleteOption = value!),
                   ),
-                  if (message.isMe) // Only show 'delete for everyone' if it's your message
+                  if (message.isMe)
                     RadioListTile<String>(
                       title: const Text('Delete for everyone'),
                       value: 'everyone',
@@ -319,10 +456,7 @@ class _ChatScreenState extends State<ChatScreen> {
       },
     );
   }
-
-  // --- Helper Functions & Lifecycle ---
-
-  void _scrollToBottom({bool isAnimated = true}) {
+  void _scrollToBottom({bool isAnimated = true}) { /* ... your existing code ... */
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
         if (isAnimated) {
@@ -336,61 +470,16 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     });
   }
-
-  String _formatTime(DateTime time) {
+  String _formatTime(DateTime time) { /* ... your existing code ... */
     return "${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}";
   }
-
-  @override
-  void dispose() {
-    reverb.close();
-    _scrollController.dispose();
-    _controller.dispose();
-    super.dispose();
-  }
-
-  // --- Build Methods ---
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF232B38),
-      appBar: AppBar(
-        title: Text(_chatTitle),
-        backgroundColor: const Color(0xFF2D3A53),
-        elevation: 0,
-      ),
-      body: SafeArea(
-        child: Column(
-          children: [
-            Expanded(child: _buildBody()),
-            _buildMessageInput(),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBody() {
-    if (_isLoading) return const Center(child: CircularProgressIndicator());
-    if (_error != null) return Center(child: Text('Error: $_error', style: const TextStyle(color: Colors.red)));
-
-    return ListView.builder(
-      controller: _scrollController,
-      padding: const EdgeInsets.all(16),
-      itemCount: _messages.length,
-      itemBuilder: (context, index) => _buildMessageBubble(_messages[index]),
-    );
-  }
-
-  Widget _buildMessageBubble(Message msg) {
+  Widget _buildMessageBubble(Message msg) { /* ... your existing code ... */
     return Align(
       alignment: msg.isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: InkWell(
-        onLongPress: () => _showDeleteDialog(msg), // Trigger delete dialog on long press
+        onLongPress: () => _showDeleteDialog(msg),
         borderRadius: BorderRadius.circular(16),
         child: Container(
-          // ... (rest of the bubble styling is the same)
           margin: const EdgeInsets.symmetric(vertical: 4),
           padding: const EdgeInsets.all(12),
           constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
@@ -428,8 +517,7 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
     );
   }
-
-  Widget _buildMessageInput() {
+  Widget _buildMessageInput() { /* ... your existing code ... */
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
