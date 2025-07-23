@@ -4,12 +4,8 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:simple_flutter_reverb/simple_flutter_reverb.dart';
 import 'package:simple_flutter_reverb/simple_flutter_reverb_options.dart';
-
-// --- Import the WebRTC Service and its dependencies ---
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'services/webrtc_service.dart';
-
-// Import the user profile model
 import 'models/user_profile_model.dart';
 
 // The widget now only needs the chatId to start
@@ -25,7 +21,7 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-// (The Message class remains the same)
+// Message class
 class Message {
   final int messageId;
   final String sender;
@@ -47,7 +43,8 @@ class Message {
     final senderData = json['sender'] as Map<String, dynamic>? ?? {};
     final senderId = senderData['user_id'] as int? ?? 0;
     final senderName = senderData['name'] as String? ?? 'Unknown User';
-    final createdAt = json['created_at'] as String? ?? DateTime.now().toIso8601String();
+    final createdAt =
+        json['created_at'] as String? ?? DateTime.now().toIso8601String();
 
     return Message(
       messageId: json['message_id'],
@@ -71,11 +68,12 @@ class _ChatScreenState extends State<ChatScreen> {
   String _chatTitle = 'Loading...';
   bool _isLoading = true;
   String? _error;
-  final String baseUrl = 'http://127.0.0.1:8000/api'; // Ensure this is your correct local URL for testing
+  final String baseUrl ='http://127.0.0.1:8000/api'; // Use 10.0.2.2 for Android Emulator
 
   // WebRTC & Calling State
   final WebRTCService _webRTCService = WebRTCService();
-  bool _isCalling = false;
+  bool _isCallActive = false;
+  bool _remoteUserJoined = false;
 
   // =========== Lifecycle Methods ===========
 
@@ -84,22 +82,35 @@ class _ChatScreenState extends State<ChatScreen> {
     super.initState();
     _initializeChat();
     _webRTCService.initialize();
+
+    // Listen for when the remote user's video stream becomes available
+    _webRTCService.onRemoteStream = (stream) {
+      if (mounted) {
+        setState(() {
+          _remoteUserJoined = true;
+        });
+      }
+    };
   }
 
   @override
   void dispose() {
-    // This is the single, correct dispose method
-    reverb.close();
+    _webRTCService.dispose();
+    if (mounted) {
+      reverb.close();
+    }
     _scrollController.dispose();
     _controller.dispose();
-    _webRTCService.dispose();
     super.dispose();
   }
 
   // =========== Core Initialization & Listeners ===========
 
   Future<void> _initializeChat() async {
-    setState(() { _isLoading = true; _error = null; });
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
     try {
       final prefs = await SharedPreferences.getInstance();
       _token = prefs.getString('token');
@@ -120,14 +131,12 @@ class _ChatScreenState extends State<ChatScreen> {
   void _setupReverbListeners() {
     if (_token == null || _currentUserId == null) return;
 
-    final String hostIp = '127.0.0.1'; // <-- CHANGE THIS IF ON IOS SIMULATOR
-
     final options = SimpleFlutterReverbOptions(
       scheme: 'ws',
-      host: hostIp,
-      port: '8080', // Default Reverb port is 8080
-      appKey: '5wigxwtui29q0dviuc4a', // Your local app key from .env
-      authUrl: 'http://$hostIp:8000/broadcasting/auth', // Your Laravel server URL
+      host: '127.0.0.1',
+      port: '8080',
+      appKey: '5wigxwtui29q0dviuc4a',
+      authUrl: 'http://127.0.0.1:8000/broadcasting/auth',
       authToken: _token!,
     );
 
@@ -136,21 +145,16 @@ class _ChatScreenState extends State<ChatScreen> {
 
     reverb.listen((event) {
       if (event?.data == null || event!.event == null) return;
+      // In a more robust system, you'd check a sender_id here to ignore your own events.
 
       switch (event.event) {
-      // --- FIXED CASE 1: MESSAGE SENT ---
         case 'App\\Events\\MessageSent':
           try {
             final messageData = event.data['message'];
             if (messageData == null) return;
-
             final newMessage = Message.fromJson(messageData, _currentUserId!);
-
-            // Prevent adding a message that's already in the list
             if (!_messages.any((msg) => msg.messageId == newMessage.messageId)) {
-              setState(() {
-                _messages.add(newMessage);
-              });
+              setState(() => _messages.add(newMessage));
               _scrollToBottom();
             }
           } catch (e) {
@@ -158,89 +162,148 @@ class _ChatScreenState extends State<ChatScreen> {
           }
           break;
 
-      // --- FIXED CASE 2: MESSAGE DELETED ---
         case 'App\\Events\\MessageDeleted':
           try {
-            // Robustly parse the message ID
             final dynamic receivedId = event.data['messageId'];
             if (receivedId == null) return;
             final int? deletedMessageId = int.tryParse(receivedId.toString());
             if (deletedMessageId == null) return;
-
             setState(() {
               _messages.removeWhere((msg) => msg.messageId == deletedMessageId);
             });
-            print('Successfully removed message ID: $deletedMessageId in real-time.');
           } catch (e) {
             print('Error processing MessageDeleted: $e');
           }
           break;
 
-      // --- WORKING CASE 3: INCOMING CALL ---
         case 'App\\Events\\IncomingCall':
-          try {
-            if (_isCalling) return;
-            print('INCOMING CALL EVENT RECEIVED!');
-            final data = event.data as Map<String, dynamic>;
-            final callerInfo = data['caller'] as Map<String, dynamic>;
-            final offer = data['offer'] as Map<String, dynamic>;
-            _showIncomingCallDialog(callerInfo, offer);
-          } catch (e) {
-            print('Error processing IncomingCall event: $e');
-          }
+          if (_isCallActive) return; // Ignore if already in a call
+          final data = event.data as Map<String, dynamic>;
+          final offer = data['offer'] as Map<String, dynamic>;
+          _showIncomingCallDialog(data['caller'], offer);
           break;
 
-        default:
-          print('Received unhandled event type: ${event.event}');
+        case 'App\\Events\\CallAccepted':
+          if (!_isCallActive) return; // Ignore if we are not the caller
+          final answerMap = event.data['answer'] as Map<String, dynamic>;
+          final answer =
+          RTCSessionDescription(answerMap['sdp'], answerMap['type']);
+          _webRTCService.setRemoteAnswer(answer);
+          break;
+
+        case 'App\\Events\\IceCandidate':
+          if (!_isCallActive) return;
+          final candidateMap = event.data['candidate'] as Map<String, dynamic>;
+          final candidate = RTCIceCandidate(
+            candidateMap['candidate'],
+            candidateMap['sdpMid'],
+            candidateMap['sdpMLineIndex'],
+          );
+          _webRTCService.addIceCandidate(candidate);
+          break;
+
+        case 'App\\Events\\CallEnded':
+          if (!_isCallActive) return;
+          _endCallCleanup();
+          ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('The other user ended the call.')));
+          break;
       }
     }, channelName, isPrivate: true);
   }
 
   // =========== Calling Logic ===========
 
-  void _handleCall(BuildContext context, {required bool isVideoCall}) async {
-    setState(() { _isCalling = true; });
+  Future<void> _handleCall(BuildContext context,
+      {required bool isVideoCall}) async {
+    setState(() => _isCallActive = true);
+    await _webRTCService.initiateCall(
+      chatId: widget.chatId.toString(),
+      isVideoCall: isVideoCall,
+    );
+  }
+
+  Future<void> _acceptCall(Map<String, dynamic> offerMap) async {
+    // Immediately switch to the call UI to give user feedback
+    setState(() => _isCallActive = true);
+
     try {
-      await _webRTCService.initiateCall(
-        chatId: widget.chatId.toString(),
-        isVideoCall: isVideoCall,
+      print("Attempting to accept call with received offer...");
+
+      // --- THIS IS THE FIX ---
+      // 1. Check if the incoming offer is for a video call by looking for "m=video" in the SDP.
+      String receivedSdp = offerMap['sdp'].toString();
+      bool isVideoCall = receivedSdp.contains('m=video');
+      print("Detected incoming call type -> isVideoCall: $isVideoCall");
+      // --- END OF FIX ---
+
+      // Rebuild/sanitize the SDP string (this is still a good practice)
+      List<String> lines = receivedSdp.split(RegExp(r'\r\n?|\n'));
+      String sanitizedSdp = lines.map((line) => line.trim()).where((line) => line.isNotEmpty).join('\r\n');
+      sanitizedSdp += '\r\n';
+
+      // Create the RTCSessionDescription object using the sanitized SDP
+      final offer = RTCSessionDescription(
+        sanitizedSdp,
+        offerMap['type'],
       );
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Calling... Awaiting response.'), backgroundColor: Colors.green),
-        );
-      }
+
+      // Call the service method, now passing the CORRECT isVideoCall flag
+      await _webRTCService.acceptCallAndCreateAnswer(
+        chatId: widget.chatId.toString(),
+        offer: offer,
+        isVideoCall: isVideoCall, // Use the detected value
+      );
+
+      print("Successfully created and sent answer.");
+
     } catch (e) {
+      print("!!! FAILED TO ACCEPT CALL: $e");
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error initiating call: ${e.toString().replaceAll("Exception: ", "")}'), backgroundColor: Theme.of(context).colorScheme.error),
+          SnackBar(
+            content: Text('Error accepting call: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
+        // If accepting fails, take the user out of the call UI
+        setState(() => _isCallActive = false);
       }
-      setState(() { _isCalling = false; });
     }
   }
 
-  void _showIncomingCallDialog(Map<String, dynamic> callerInfo, Map<String, dynamic> offer) {
-    if (ModalRoute.of(context)?.isCurrent != true) return; // Prevent showing dialog if not on this screen
+  Future<void> _hangUp() async {
+    await _webRTCService.hangUp();
+    _endCallCleanup();
+  }
+
+  void _endCallCleanup() {
+    if (mounted) {
+      setState(() {
+        _isCallActive = false;
+        _remoteUserJoined = false;
+      });
+    }
+  }
+
+  void _showIncomingCallDialog(
+      Map<String, dynamic> callerInfo, Map<String, dynamic> offer) {
+    if (ModalRoute.of(context)?.isCurrent != true) return;
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (BuildContext context) {
         final callerName = callerInfo['name'] ?? 'Someone';
         return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
           title: const Text('Incoming Call'),
           content: Text('$callerName is calling...'),
           actions: <Widget>[
             TextButton(
-              child: const Text('Decline', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
-              onPressed: () {
-                // TODO: Notify the caller that the call was declined.
-                Navigator.of(context).pop();
-              },
+              child:
+              const Text('Decline', style: TextStyle(color: Colors.red)),
+              onPressed: () => Navigator.of(context).pop(),
             ),
             ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
               child: const Text('Accept'),
               onPressed: () {
                 Navigator.of(context).pop();
@@ -251,16 +314,6 @@ class _ChatScreenState extends State<ChatScreen> {
         );
       },
     );
-  }
-
-  void _acceptCall(Map<String, dynamic> offer) {
-    print("Call accepted! Now processing this offer: $offer");
-    // TODO: This is the next major step.
-    // 1. Set the 'offer' as the remote description.
-    // 2. Get local camera/mic stream.
-    // 3. Create an 'Answer'.
-    // 4. Set the 'Answer' as the local description.
-    // 5. Send the 'Answer' back to the caller via a new API endpoint.
   }
 
   // =========== Data Fetching & Message Handling ===========
@@ -292,7 +345,8 @@ class _ChatScreenState extends State<ChatScreen> {
           setState(() => _chatTitle = chatData['title']);
         } else {
           final members = chatData['members'] as List;
-          final otherMember = members.firstWhere((m) => m['is_you'] == false, orElse: () => null);
+          final otherMember =
+          members.firstWhere((m) => m['is_you'] == false, orElse: () => null);
           setState(() => _chatTitle = otherMember != null ? otherMember['name'] : 'Chat');
         }
       }
@@ -312,7 +366,8 @@ class _ChatScreenState extends State<ChatScreen> {
       final jsonResponse = jsonDecode(response.body);
       final List<dynamic> data = jsonResponse['data'];
       setState(() {
-        _messages = data.map((json) => Message.fromJson(json, _currentUserId!)).toList();
+        _messages =
+            data.map((json) => Message.fromJson(json, _currentUserId!)).toList();
       });
       _scrollToBottom(isAnimated: false);
     } else {
@@ -331,11 +386,17 @@ class _ChatScreenState extends State<ChatScreen> {
           'Authorization': 'Bearer $_token',
           'Content-Type': 'application/json',
         },
-        body: jsonEncode({'chat_id': widget.chatId, 'message_type': 'text', 'text': text}),
+        body: jsonEncode({
+          'chat_id': widget.chatId,
+          'message_type': 'text',
+          'text': text
+        }),
       );
       _controller.clear();
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error sending message: $e')));
+      if (mounted)
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Error sending message: $e')));
     }
   }
 
@@ -355,9 +416,10 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Failed to delete message.'), backgroundColor: Colors.red));
-        _fetchMessages(); // Restore messages on failure
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Failed to delete message.'),
+            backgroundColor: Colors.red));
+        _fetchMessages();
       }
     }
   }
@@ -376,22 +438,27 @@ class _ChatScreenState extends State<ChatScreen> {
                   title: const Text('Delete for me'),
                   value: 'me',
                   groupValue: deleteOption,
-                  onChanged: (value) => setDialogState(() => deleteOption = value!),
+                  onChanged: (value) =>
+                      setDialogState(() => deleteOption = value!),
                 ),
                 if (message.isMe)
                   RadioListTile<String>(
                     title: const Text('Delete for everyone'),
                     value: 'everyone',
                     groupValue: deleteOption,
-                    onChanged: (value) => setDialogState(() => deleteOption = value!),
+                    onChanged: (value) =>
+                        setDialogState(() => deleteOption = value!),
                   ),
               ]),
               actions: [
-                TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+                TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Cancel')),
                 TextButton(
                   onPressed: () {
                     Navigator.of(context).pop();
-                    _deleteMessage(message.messageId, deleteOption == 'everyone');
+                    _deleteMessage(
+                        message.messageId, deleteOption == 'everyone');
                   },
                   child: const Text('Delete', style: TextStyle(color: Colors.red)),
                 ),
@@ -429,81 +496,96 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF232B38),
-      appBar: AppBar(
+      appBar: _isCallActive
+          ? null // Hide AppBar during call
+          : AppBar(
         title: Text(_chatTitle),
         backgroundColor: const Color(0xFF2D3A53),
-        elevation: 0,
         actions: [
           IconButton(
-            icon: const Icon(Icons.videocam),
-            tooltip: 'Video Call',
-            onPressed: _isCalling ? null : () => _handleCall(context, isVideoCall: true),
-          ),
+              icon: const Icon(Icons.videocam),
+              onPressed: () => _handleCall(context, isVideoCall: true)),
           IconButton(
-            icon: const Icon(Icons.call),
-            tooltip: 'Audio Call',
-            onPressed: _isCalling ? null : () => _handleCall(context, isVideoCall: false),
-          ),
-          const SizedBox(width: 8),
+              icon: const Icon(Icons.call),
+              onPressed: () => _handleCall(context, isVideoCall: false)),
         ],
       ),
       body: SafeArea(
-        child: Column(
+        child: _isCallActive
+            ? _buildInCallUI()
+            : Column(
           children: [
-            Expanded(child: _isCalling ? _buildCallingUI() : _buildBody()),
-            if (!_isCalling) _buildMessageInput(),
+            Expanded(child: _buildBody()),
+            _buildMessageInput(),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildCallingUI() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Text(
-            'Initiating Call...',
-            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white),
-          ),
-          const SizedBox(height: 20),
-          const CircularProgressIndicator(),
-          const SizedBox(height: 30),
-          Container(
-            width: 200,
-            height: 266,
-            decoration: BoxDecoration(
-              color: Colors.black,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.grey.shade700, width: 2),
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(10),
-              child: RTCVideoView(
-                _webRTCService.localRenderer,
-                mirror: true,
-                objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+  Widget _buildInCallUI() {
+    return Stack(
+      children: [
+        // Remote User's Video (full screen)
+        Positioned.fill(
+          child: Container(
+            color: Colors.black87,
+            child: _remoteUserJoined
+                ? RTCVideoView(_webRTCService.remoteRenderer,
+                objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover)
+                : const Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 20),
+                  Text('Connecting...',
+                      style: TextStyle(color: Colors.white)),
+                ],
               ),
             ),
           ),
-          const SizedBox(height: 20),
-          ElevatedButton.icon(
-            onPressed: () {
-              setState(() { _isCalling = false; });
-            },
-            icon: const Icon(Icons.call_end),
-            label: const Text('Cancel'),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-          )
-        ],
-      ),
+        ),
+
+        // Local User's Video (picture-in-picture)
+        Positioned(
+          top: 20,
+          right: 20,
+          child: SizedBox(
+            width: 100,
+            height: 150,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: RTCVideoView(_webRTCService.localRenderer,
+                  mirror: true,
+                  objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover),
+            ),
+          ),
+        ),
+
+        // Call Controls (Hang Up Button)
+        Positioned(
+          bottom: 40,
+          left: 0,
+          right: 0,
+          child: CircleAvatar(
+            radius: 30,
+            backgroundColor: Colors.red,
+            child: IconButton(
+              icon: const Icon(Icons.call_end, color: Colors.white),
+              onPressed: _hangUp,
+            ),
+          ),
+        )
+      ],
     );
   }
 
   Widget _buildBody() {
     if (_isLoading) return const Center(child: CircularProgressIndicator());
-    if (_error != null) return Center(child: Text('Error: $_error', style: const TextStyle(color: Colors.red)));
+    if (_error != null)
+      return Center(
+          child: Text('Error: $_error', style: const TextStyle(color: Colors.red)));
     return ListView.builder(
       controller: _scrollController,
       padding: const EdgeInsets.all(16),
@@ -521,14 +603,17 @@ class _ChatScreenState extends State<ChatScreen> {
         child: Container(
           margin: const EdgeInsets.symmetric(vertical: 4),
           padding: const EdgeInsets.all(12),
-          constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
+          constraints:
+          BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
           decoration: BoxDecoration(
             color: msg.isMe ? const Color(0xFF2D3A53) : const Color(0xFFB0B6C1),
             borderRadius: BorderRadius.only(
               topLeft: const Radius.circular(16),
               topRight: const Radius.circular(16),
-              bottomLeft: msg.isMe ? const Radius.circular(16) : const Radius.circular(4),
-              bottomRight: msg.isMe ? const Radius.circular(4) : const Radius.circular(16),
+              bottomLeft:
+              msg.isMe ? const Radius.circular(16) : const Radius.circular(4),
+              bottomRight:
+              msg.isMe ? const Radius.circular(4) : const Radius.circular(16),
             ),
           ),
           child: Column(
@@ -536,19 +621,25 @@ class _ChatScreenState extends State<ChatScreen> {
             children: [
               Text(
                 msg.sender,
-                style: TextStyle(color: msg.isMe ? Colors.blue[200] : Colors.grey[800], fontWeight: FontWeight.bold, fontSize: 12),
+                style: TextStyle(
+                    color: msg.isMe ? Colors.blue[200] : Colors.grey[800],
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12),
               ),
               const SizedBox(height: 4),
               Text(
                 msg.text,
-                style: TextStyle(color: msg.isMe ? Colors.white : Colors.black, fontSize: 16),
+                style: TextStyle(
+                    color: msg.isMe ? Colors.white : Colors.black, fontSize: 16),
               ),
               const SizedBox(height: 4),
               Align(
                 alignment: Alignment.bottomRight,
                 child: Text(
                   _formatTime(msg.time),
-                  style: TextStyle(color: msg.isMe ? Colors.blue[100] : Colors.grey[700], fontSize: 10),
+                  style: TextStyle(
+                      color: msg.isMe ? Colors.blue[100] : Colors.grey[700],
+                      fontSize: 10),
                 ),
               ),
             ],
@@ -574,8 +665,11 @@ class _ChatScreenState extends State<ChatScreen> {
               decoration: InputDecoration(
                 hintText: 'Type a message...',
                 hintStyle: TextStyle(color: Colors.grey[400]),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(24), borderSide: BorderSide.none),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(24),
+                    borderSide: BorderSide.none),
+                contentPadding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                 filled: true,
                 fillColor: const Color(0xFF2D3A53),
               ),
@@ -585,7 +679,9 @@ class _ChatScreenState extends State<ChatScreen> {
           const SizedBox(width: 8),
           CircleAvatar(
             backgroundColor: Colors.blue[400],
-            child: IconButton(icon: const Icon(Icons.send, color: Colors.white), onPressed: _sendMessage),
+            child: IconButton(
+                icon: const Icon(Icons.send, color: Colors.white),
+                onPressed: _sendMessage),
           ),
         ],
       ),
