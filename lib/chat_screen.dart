@@ -7,6 +7,7 @@ import 'package:simple_flutter_reverb/simple_flutter_reverb_options.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'services/webrtc_service.dart';
 import 'models/user_profile_model.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 // The widget now only needs the chatId to start
 class ChatScreen extends StatefulWidget {
@@ -68,7 +69,7 @@ class _ChatScreenState extends State<ChatScreen> {
   String _chatTitle = 'Loading...';
   bool _isLoading = true;
   String? _error;
-  final String baseUrl ='http://127.0.0.1:8000/api';
+  final String baseUrl ='https://dev.api.chat.d.aditidemo.asia/api';
 
   // WebRTC & Calling State
   final WebRTCService _webRTCService = WebRTCService();
@@ -128,11 +129,11 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_token == null || _currentUserId == null) return;
 
     final options = SimpleFlutterReverbOptions(
-      scheme: 'ws',
-      host: '127.0.0.1',
-      port: '8080',
+      scheme: 'wss',
+      host: 'dev.api.chat.d.aditidemo.asia',
+      port: '443',
       appKey: '5wigxwtui29q0dviuc4a',
-      authUrl: 'http://127.0.0.1:8000/broadcasting/auth',
+      authUrl: 'https://dev.api.chat.d.aditidemo.asia/broadcasting/auth',
       authToken: _token!,
     );
 
@@ -221,12 +222,68 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  Future<bool> _requestPermissions(bool isVideoCall) async {
+    Map<Permission, PermissionStatus> statuses;
+    if (isVideoCall) {
+      statuses = await [Permission.camera, Permission.microphone].request();
+    } else {
+      statuses = await [Permission.microphone].request();
+    }
+
+    bool allGranted = true;
+    statuses.forEach((permission, status) {
+      if (!status.isGranted) {
+        allGranted = false;
+      }
+    });
+
+    if (!allGranted && mounted) {
+      if (statuses.values.any((status) => status.isPermanentlyDenied)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Permissions are required. Please enable them in app settings.'),
+            action: SnackBarAction(
+              label: 'Settings',
+              onPressed: openAppSettings,
+            ),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Camera and Microphone permissions are required to make a call.')),
+        );
+      }
+    }
+    return allGranted;
+  }
+
   Future<void> _handleCall(BuildContext context, {required bool isVideoCall}) async {
+    final bool permissionsGranted = await _requestPermissions(isVideoCall);
+    if (!permissionsGranted) {
+      print("Call aborted because permissions were not granted.");
+      return;
+    }
+
     setState(() => _isCallActive = true);
-    await _webRTCService.initiateCall(
-      chatId: widget.chatId.toString(),
-      isVideoCall: isVideoCall,
-    );
+
+    try {
+      await _webRTCService.initiateCall(
+        chatId: widget.chatId.toString(),
+        isVideoCall: isVideoCall,
+      );
+    } catch (e) {
+      print("!!! FAILED TO INITIATE CALL: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to start call: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        // Reset the state since the call failed
+        setState(() => _isCallActive = false);
+      }
+    }
   }
 
   Future<void> _acceptCall(Map<String, dynamic> offerMap) async {

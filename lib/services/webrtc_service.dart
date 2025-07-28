@@ -82,7 +82,7 @@ class WebRTCService {
     if (token == null) throw Exception('Auth token not found.');
 
     // IMPORTANT: Use 10.0.2.2 for Android Emulator to reach your PC's localhost
-    final url = 'http://127.0.0.1:8000/api/webrtc/$endpoint';
+    final url = 'https://dev.api.chat.d.aditidemo.asia/api/webrtc/$endpoint';
 
     try {
       final response = await http.post(
@@ -121,11 +121,27 @@ class WebRTCService {
     await _createPeerConnection();
     _chatId = chatId;
 
-    _localStream = await navigator.mediaDevices.getUserMedia({
+    // Define video constraints for better compatibility
+    final Map<String, dynamic> mediaConstraints = {
       'audio': true,
-      'video': isVideoCall,
-    });
-    localRenderer.srcObject = _localStream;
+      'video': isVideoCall
+          ? {
+              'facingMode': 'user',
+            }
+          : false,
+    };
+
+    try {
+      print("Attempting to get user media with constraints: $mediaConstraints");
+      _localStream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
+      localRenderer.srcObject = _localStream;
+      print("Successfully got user media.");
+    } catch (e) {
+      print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+      print("Error getting user media in initiateCall: $e");
+      print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+      rethrow; // Re-throw the exception to be handled by the caller UI
+    }
 
     _localStream!.getTracks().forEach((track) {
       _peerConnection!.addTrack(track, _localStream!);
@@ -161,11 +177,27 @@ class WebRTCService {
     await _peerConnection!.setRemoteDescription(offer);
 
     print("SERVICE: 4. Getting local camera/mic stream...");
-    _localStream = await navigator.mediaDevices.getUserMedia({
+    // Define video constraints for better compatibility
+    final Map<String, dynamic> mediaConstraints = {
       'audio': true,
-      'video': isVideoCall,
-    });
-    localRenderer.srcObject = _localStream;
+      'video': isVideoCall
+          ? {
+              'facingMode': 'user',
+            }
+          : false,
+    };
+
+    try {
+      print("Attempting to get user media with constraints: $mediaConstraints");
+      _localStream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
+      localRenderer.srcObject = _localStream;
+      print("Successfully got user media.");
+    } catch (e) {
+      print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+      print("Error getting user media in acceptCallAndCreateAnswer: $e");
+      print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+      rethrow; // Re-throw the exception to be handled by the caller UI
+    }
 
     _localStream!.getTracks().forEach((track) {
       _peerConnection!.addTrack(track, _localStream!);

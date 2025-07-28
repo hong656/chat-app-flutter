@@ -18,15 +18,12 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         primarySwatch: Colors.blue,
       ),
-      initialRoute: '/login', // Assuming you still want to start at login
+      initialRoute: '/login',
       routes: {
         '/login': (context) => const LoginScreen(),
-        '/': (context) => const HomePage(), // This is your main page after login
-        '/users_list': (context) => const UsersListScreen(), // Route for Users List
-        '/chat_list': (context) => const ChatListScreen(),   // Route for Chat List
-        // You can keep or remove chat1 and chat2 routes if they are no longer needed
-        // '/chat1': (context) => const ChatScreen(),
-        // '/chat2': (context) => const ChatScreen2(),
+        '/': (context) => const HomePage(),
+        '/users_list': (context) => const UsersListScreen(),
+        '/chat_list': (context) => const ChatListScreen(),
       },
     );
   }
