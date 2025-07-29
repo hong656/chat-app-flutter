@@ -8,6 +8,7 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'services/webrtc_service.dart';
 import 'models/user_profile_model.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'dart:async';
 
 // The widget now only needs the chatId to start
 class ChatScreen extends StatefulWidget {
@@ -21,6 +22,9 @@ class ChatScreen extends StatefulWidget {
   @override
   State<ChatScreen> createState() => _ChatScreenState();
 }
+
+Timer? _callTimer;
+int _callDurationInSeconds = 0;
 
 // Message class
 class Message {
@@ -87,6 +91,7 @@ class _ChatScreenState extends State<ChatScreen> {
         setState(() {
           _remoteUserJoined = true;
         });
+        _startCallTimer(); // Start the timer when the remote user joins
       }
     };
   }
@@ -96,6 +101,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_isCallActive) {
       _hangUp();
     }
+    _stopCallTimer(); // Stop the timer when the screen is disposed
     reverb?.close();
     _webRTCService.dispose();
     _scrollController.dispose();
@@ -123,6 +129,33 @@ class _ChatScreenState extends State<ChatScreen> {
         _isLoading = false;
       });
     }
+  }
+
+  void _startCallTimer() {
+    _callTimer?.cancel(); // Cancel any existing timer
+    _callTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!_isCallActive) {
+        timer.cancel();
+        return;
+      }
+      setState(() {
+        _callDurationInSeconds++;
+      });
+    });
+  }
+
+  void _stopCallTimer() {
+    _callTimer?.cancel();
+    setState(() {
+      _callDurationInSeconds = 0;
+    });
+  }
+
+  String _formatCallDuration(int totalSeconds) {
+    final duration = Duration(seconds: totalSeconds);
+    final minutes = duration.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return "$minutes:$seconds";
   }
 
   void _setupReverbListeners() {
@@ -320,6 +353,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _remoteUserJoined = false;
       });
     }
+    _stopCallTimer(); // Also stop the timer here
   }
 
   void _showIncomingCallDialog(Map<String, dynamic> callerInfo, Map<String, dynamic> offer) {
@@ -578,6 +612,25 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
         ),
+        if (_remoteUserJoined)
+          Positioned(
+            top: 80,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.5),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  _formatCallDuration(_callDurationInSeconds),
+                  style: const TextStyle(color: Colors.white, fontSize: 16),
+                ),
+              ),
+            ),
+          ),
         Positioned(
           top: 20,
           right: 20,
