@@ -61,7 +61,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
     try {
       final response = await http.post(
-        Uri.parse('https://api-test-chat.d.aditidemo.asia/api/login'),
+        Uri.parse('https://dev.api.chat.d.aditidemo.asia/api/login'),
         headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
         body: jsonEncode({
           'email': _emailController.text.trim(),
@@ -105,7 +105,7 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       final response = await http.post(
         // IMPORTANT: Use your actual registration endpoint
-        Uri.parse('https://api-test-chat.d.aditidemo.asia/api/register'),
+        Uri.parse('https://dev.api.chat.d.aditidemo.asia/api/register'),
         headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
         body: jsonEncode({
           'name': _nameController.text.trim(),

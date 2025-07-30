@@ -46,10 +46,7 @@ class _UsersListScreenState extends State<UsersListScreen> {
         throw Exception('Authentication token not found. Please log in again.');
       }
 
-      // IMPORTANT: Use your actual API endpoint. 
-      // For Android emulator, use 10.0.2.2 to access localhost.
-      // For web/desktop, '127.0.0.1' is fine.
-      final response = await http.get(Uri.parse('https://api-test-chat.d.aditidemo.asia/api/get'));
+      final response = await http.get(Uri.parse('https://dev.api.chat.d.aditidemo.asia/api/get'));
 
       if (response.statusCode == 200) {
         final List<dynamic> data = jsonDecode(response.body);
@@ -93,7 +90,7 @@ class _UsersListScreenState extends State<UsersListScreen> {
       };
 
       final response = await http.post(
-        Uri.parse('https://api-test-chat.d.aditidemo.asia/api/chat'),
+        Uri.parse('https://dev.api.chat.d.aditidemo.asia/api/chat'),
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
